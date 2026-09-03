@@ -19,156 +19,131 @@ import java.util.stream.Collectors;
 @Service
 public class DashboardService {
 
-    private final TransactionRepository transactionRepository;
+        private final TransactionRepository transactionRepository;
 
-    public DashboardService(TransactionRepository transactionRepository) {
-        this.transactionRepository = transactionRepository;
-    }
+        public DashboardService(TransactionRepository transactionRepository) {
+                this.transactionRepository = transactionRepository;
+        }
 
-    // API 1
-    public DashboardResponse getDashboard() {
+        // API 1
+        public DashboardResponse getDashboard() {
 
-        long pendingLeadReference = transactionRepository.countByStage("LEAD_REFERENCE");
+                long pendingLeadReference = transactionRepository.countByStage("LEAD_REFERENCE");
+                long pendingQuotations = transactionRepository.countByStage("QUOTATION");
+                long pendingPaymentConfirmations = transactionRepository.countByStage("PAYMENT_CONFIRMATION");
+                long pendingManagerApprovals = transactionRepository.countByStage("MANAGER_CUSTOMER_CONFIRMATION");
+                long pendingRiAcceptance = transactionRepository.countByStage("RI_ACCEPTANCE");
+                long pendingUnderwriterAction = transactionRepository.countByStage("UNDERWRITER_ACTION");
+                long completedTransactions = transactionRepository.countByStage("COMPLETED");
 
-        long pendingQuotations = transactionRepository.countByStage("QUOTATION");
+                return new DashboardResponse(
+                                pendingLeadReference,
+                                pendingQuotations,
+                                pendingPaymentConfirmations,
+                                pendingManagerApprovals,
+                                pendingRiAcceptance,
+                                pendingUnderwriterAction,
+                                completedTransactions);
+        }
 
-        long pendingPaymentConfirmations = transactionRepository.countByStage("PAYMENT_CONFIRMATION");
+        // API 2
+        public CompletedTransactionSummaryResponse getCompletedTransactions(
+                        LocalDateTime from,
+                        LocalDateTime to) {
 
-        long pendingManagerApprovals = transactionRepository.countByStage(
-                "MANAGER_CUSTOMER_CONFIRMATION");
+                List<Transaction> transactions = transactionRepository.findByStageAndCompletedAtBetween(
+                                "COMPLETED", from, to);
 
-        long pendingRiAcceptance = transactionRepository.countByStage("RI_ACCEPTANCE");
+                List<CompletedTransactionResponse> responses = transactions.stream()
+                                .map(transaction -> new CompletedTransactionResponse(
+                                                transaction.getReferenceNumber(),
+                                                transaction.getTransactionType(),
+                                                transaction.getCreatedAt(),
+                                                transaction.getCompletedAt()))
+                                .toList();
 
-        long pendingUnderwriterAction = transactionRepository.countByStage("UNDERWRITER_ACTION");
+                long totalCompleted = responses.size();
 
-        long completedTransactions = transactionRepository.countByStage("COMPLETED");
+                long policyCompleted = responses.stream()
+                                .filter(transaction -> transaction.getTransactionType().equals("POLICY"))
+                                .count();
 
-        return new DashboardResponse(
-                pendingLeadReference,
-                pendingQuotations,
-                pendingPaymentConfirmations,
-                pendingManagerApprovals,
-                pendingRiAcceptance,
-                pendingUnderwriterAction,
-                completedTransactions);
-    }
+                long endorsementCompleted = responses.stream()
+                                .filter(transaction -> transaction.getTransactionType().equals("ENDORSEMENT"))
+                                .count();
 
-    // API 2
-    public CompletedTransactionSummaryResponse getCompletedTransactions(
-            LocalDateTime from,
-            LocalDateTime to) {
+                return new CompletedTransactionSummaryResponse(
+                                totalCompleted, policyCompleted, endorsementCompleted, responses);
+        }
 
-        List<Transaction> transactions = transactionRepository.findByStageAndCompletedAtBetween(
-                "COMPLETED",
-                from,
-                to);
+        // API 3
+        public PerformanceResponse getPerformance(
+                        LocalDateTime from,
+                        LocalDateTime to) {
 
-        List<CompletedTransactionResponse> responses = transactions.stream()
-                .map(transaction -> new CompletedTransactionResponse(
-                        transaction.getReferenceNumber(),
-                        transaction.getTransactionType(),
-                        transaction.getCreatedAt(),
-                        transaction.getCompletedAt()))
-                .toList();
+                List<Transaction> transactions = transactionRepository.findByStageAndCompletedAtBetween(
+                                "COMPLETED", from, to);
 
-        long totalCompleted = responses.size();
+                // Overall Policy TAT
+                double policyTat = round2(transactions.stream()
+                                .filter(transaction -> transaction.getTransactionType().equals("POLICY"))
+                                .mapToDouble(this::calculateTatInDays)
+                                .average()
+                                .orElse(0.0));
 
-        long policyCompleted = responses.stream()
-                .filter(transaction -> transaction.getTransactionType().equals("POLICY"))
-                .count();
+                // Overall Endorsement TAT
+                double endorsementTat = round2(transactions.stream()
+                                .filter(transaction -> transaction.getTransactionType().equals("ENDORSEMENT"))
+                                .mapToDouble(this::calculateTatInDays)
+                                .average()
+                                .orElse(0.0));
 
-        long endorsementCompleted = responses.stream()
-                .filter(transaction -> transaction.getTransactionType()
-                        .equals("ENDORSEMENT"))
-                .count();
+                // Group transactions by completion date
+                Map<LocalDate, List<Transaction>> transactionsByDate = transactions.stream()
+                                .collect(Collectors.groupingBy(
+                                                transaction -> transaction.getCompletedAt().toLocalDate()));
 
-        return new CompletedTransactionSummaryResponse(
-                totalCompleted,
-                policyCompleted,
-                endorsementCompleted,
-                responses);
-    }
+                // Create trend data
+                List<PerformanceTrend> trend = transactionsByDate.entrySet()
+                                .stream()
+                                .sorted(Map.Entry.comparingByKey())
+                                .map(entry -> {
 
-    // API 3
-    public PerformanceResponse getPerformance(
-            LocalDateTime from,
-            LocalDateTime to) {
+                                        LocalDate date = entry.getKey();
+                                        List<Transaction> dailyTransactions = entry.getValue();
 
-        List<Transaction> transactions = transactionRepository.findByStageAndCompletedAtBetween(
-                "COMPLETED",
-                from,
-                to);
+                                        double dailyPolicyTat = round2(dailyTransactions.stream()
+                                                        .filter(transaction -> transaction.getTransactionType()
+                                                                        .equals("POLICY"))
+                                                        .mapToDouble(this::calculateTatInDays)
+                                                        .average()
+                                                        .orElse(0.0));
 
-        // Overall Policy TAT
-        double policyTat = transactions.stream()
-                .filter(transaction -> transaction.getTransactionType()
-                        .equals("POLICY"))
-                .mapToDouble(this::calculateTatInDays)
-                .average()
-                .orElse(0.0);
+                                        double dailyEndorsementTat = round2(dailyTransactions.stream()
+                                                        .filter(transaction -> transaction.getTransactionType()
+                                                                        .equals("ENDORSEMENT"))
+                                                        .mapToDouble(this::calculateTatInDays)
+                                                        .average()
+                                                        .orElse(0.0));
 
-        // Overall Endorsement TAT
-        double endorsementTat = transactions.stream()
-                .filter(transaction -> transaction.getTransactionType()
-                        .equals("ENDORSEMENT"))
-                .mapToDouble(this::calculateTatInDays)
-                .average()
-                .orElse(0.0);
+                                        return new PerformanceTrend(date, dailyPolicyTat, dailyEndorsementTat);
+                                })
+                                .toList();
 
-        // Group transactions by completion date
-        Map<LocalDate, List<Transaction>> transactionsByDate = transactions.stream()
-                .collect(Collectors.groupingBy(
-                        transaction -> transaction.getCompletedAt()
-                                .toLocalDate()));
+                return new PerformanceResponse(policyTat, endorsementTat, trend);
+        }
 
-        // Create trend data
-        List<PerformanceTrend> trend = transactionsByDate.entrySet()
-                .stream()
-                .sorted(Map.Entry.comparingByKey())
-                .map(entry -> {
+        // Helper method
+        private double calculateTatInDays(Transaction transaction) {
 
-                    LocalDate date = entry.getKey();
+                Duration duration = Duration.between(
+                                transaction.getCreatedAt(),
+                                transaction.getCompletedAt());
 
-                    List<Transaction> dailyTransactions = entry.getValue();
+                return duration.toHours() / 24.0;
+        }
 
-                    double dailyPolicyTat = dailyTransactions.stream()
-                            .filter(transaction -> transaction
-                                    .getTransactionType()
-                                    .equals("POLICY"))
-                            .mapToDouble(
-                                    this::calculateTatInDays)
-                            .average()
-                            .orElse(0.0);
-
-                    double dailyEndorsementTat = dailyTransactions.stream()
-                            .filter(transaction -> transaction
-                                    .getTransactionType()
-                                    .equals("ENDORSEMENT"))
-                            .mapToDouble(
-                                    this::calculateTatInDays)
-                            .average()
-                            .orElse(0.0);
-
-                    return new PerformanceTrend(
-                            date,
-                            dailyPolicyTat,
-                            dailyEndorsementTat);
-                })
-                .toList();
-
-        return new PerformanceResponse(
-                policyTat,
-                endorsementTat,
-                trend);
-    }
-
-    // Helper method
-    private double calculateTatInDays(Transaction transaction) {
-
-        Duration duration = Duration.between(
-                transaction.getCreatedAt(),
-                transaction.getCompletedAt());
-
-        return duration.toHours() / 24.0;
-    }
+        private double round2(double value) {
+                return Math.round(value * 100.0) / 100.0;
+        }
 }

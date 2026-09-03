@@ -7,87 +7,64 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Random;
 
 @Configuration
 public class DataLoader {
 
-    @Bean
-    CommandLineRunner loadData(TransactionRepository repository) {
-
-        return args -> {
-
-            if (repository.count() > 0) {
-                return;
-            }
-            repository.save(new Transaction(
-                    "TXN001",
-                    "POLICY",
-                    "LEAD_REFERENCE",
-                    LocalDateTime.now().minusDays(5),
-                    null));
-
-            repository.save(new Transaction(
-                    "TXN002",
-                    "POLICY",
-                    "QUOTATION",
-                    LocalDateTime.now().minusDays(4),
-                    null));
-
-            repository.save(new Transaction(
-                    "TXN003",
-                    "POLICY",
-                    "PAYMENT_CONFIRMATION",
-                    LocalDateTime.now().minusDays(3),
-                    null));
-
-            repository.save(new Transaction(
-                    "TXN004",
-                    "POLICY",
-                    "MANAGER_CUSTOMER_CONFIRMATION",
-                    LocalDateTime.now().minusDays(2),
-                    null));
-
-            repository.save(new Transaction(
-                    "TXN005",
-                    "POLICY",
-                    "RI_ACCEPTANCE",
-                    LocalDateTime.now().minusDays(2),
-                    null));
-
-            repository.save(new Transaction(
-                    "TXN006",
-                    "POLICY",
-                    "UNDERWRITER_ACTION",
-                    LocalDateTime.now().minusDays(1),
-                    null));
-
-            repository.save(new Transaction(
-                    "TXN007",
-                    "POLICY",
-                    "COMPLETED",
-                    LocalDateTime.now().minusDays(7),
-                    LocalDateTime.now().minusDays(5)));
-
-            repository.save(new Transaction(
-                    "TXN008",
-                    "ENDORSEMENT",
-                    "COMPLETED",
-                    LocalDateTime.now().minusDays(6),
-                    LocalDateTime.now().minusDays(3)));
-
-            repository.save(new Transaction(
-                    "TXN009",
-                    "POLICY",
-                    "QUOTATION",
-                    LocalDateTime.now().minusDays(2),
-                    null));
-
-            repository.save(new Transaction(
-                    "TXN010",
-                    "ENDORSEMENT",
-                    "PAYMENT_CONFIRMATION",
-                    LocalDateTime.now().minusDays(1),
-                    null));
+        private static final String[] TYPES = { "POLICY", "ENDORSEMENT" };
+        private static final String[] STAGES = {
+                        "LEAD_REFERENCE",
+                        "QUOTATION",
+                        "PAYMENT_CONFIRMATION",
+                        "MANAGER_CUSTOMER_CONFIRMATION",
+                        "RI_ACCEPTANCE",
+                        "UNDERWRITER_ACTION",
+                        "COMPLETED"
         };
-    }
+
+        @Bean
+        CommandLineRunner loadData(TransactionRepository repository) {
+
+                return args -> {
+
+                        if (repository.count() > 0) {
+                                return;
+                        }
+
+                        Random rnd = new Random(42);
+                        int txnCounter = 1;
+
+                        for (int daysAgo = 30; daysAgo >= 0; daysAgo--) {
+
+                                int txnsToday = 2 + rnd.nextInt(5); // 2-6 per day
+
+                                for (int i = 0; i < txnsToday; i++) {
+
+                                        String type = TYPES[rnd.nextInt(TYPES.length)];
+                                        String stage = STAGES[rnd.nextInt(STAGES.length)];
+
+                                        LocalDateTime createdAt = LocalDateTime.now()
+                                                        .minusDays(daysAgo)
+                                                        .minusHours(rnd.nextInt(20))
+                                                        .minusMinutes(rnd.nextInt(60));
+
+                                        LocalDateTime completedAt = null;
+                                        if (stage.equals("COMPLETED")) {
+                                                completedAt = createdAt.plusDays(1 + rnd.nextInt(4));
+                                        }
+
+                                        String ref = String.format("TXN%03d", txnCounter++);
+
+                                        repository.save(new Transaction(
+                                                        ref,
+                                                        type,
+                                                        stage,
+                                                        createdAt,
+                                                        completedAt));
+                                }
+                        }
+                };
+        }
 }
